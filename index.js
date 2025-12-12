@@ -5,12 +5,40 @@ minimap.width = 200;
 minimap.height = 200;
 minimap.style.position = "fixed";
 minimap.style.top = "10px";
-minimap.style.right = "10px";
+minimap.style.left = "10px";
 minimap.style.border = "2px solid white";
 minimap.style.zIndex = 9999;
 minimap.style.transformOrigin = "center center";
 minimap.style.borderRadius = "50%";
+minimap.style.backdropFilter = "blur(4px)";
+minimap.style.cursor = "grab";
 document.body.appendChild(minimap);
+
+let isDragging = false;
+let dragOffsetX = 0;
+let dragOffsetY = 0;
+
+minimap.addEventListener("mousedown", (e) => {
+  isDragging = true;
+  dragOffsetX = e.clientX - minimap.offsetLeft;
+  dragOffsetY = e.clientY - minimap.offsetTop;
+  minimap.style.cursor = "grabbing";
+  e.preventDefault();
+});
+
+window.addEventListener("mousemove", (e) => {
+  if (!isDragging) return;
+  minimap.style.left = e.clientX - dragOffsetX + "px";
+  minimap.style.top = e.clientY - dragOffsetY + "px";
+});
+
+window.addEventListener("mouseup", () => {
+  if (isDragging) {
+    isDragging = false;
+    minimap.style.cursor = "grab";
+  }
+});
+
 
 const ctx = minimap.getContext("2d");
 
@@ -18,7 +46,7 @@ let provides = app._vnode.component.appContext.provides;
 let appState = provides[Object.getOwnPropertySymbols(provides).find(sym => provides[sym]._s)];
 let _stores = appState._s;
 let blocks = _stores.get("gameState").gameWorld.allItems;
-let chunkManager = _stores.get("gameState").gameWorld.chunkManager;
+let getChunkManager = () => _stores.get("gameState").gameWorld.chunkManager;
 
 async function getAverageColor(url) {
   return new Promise((resolve) => {
@@ -90,11 +118,13 @@ let cachedChunks = {};
 let lastPlayerChunk = null;
 
 function drawMinimap() {
-  const playerPos = _stores.get("gameState").gameWorld.player.position;
-  const playerRot = _stores.get("gameState").gameWorld.player.rotation.y;
+  const playerPos = _stores.get("gameState")?.gameWorld?.player?.position;
+  const playerRot = _stores.get("gameState")?.gameWorld?.player?.rotation.y;
   const size = 200;
   const viewRadius = 50;
   const blockSize = size / (viewRadius * 2);
+
+  if (!playerPos) return;
 
   const deg = (playerRot * (180 / Math.PI)) % 360;
   minimap.style.transform = `rotate(${deg}deg)`;
@@ -118,7 +148,7 @@ function drawMinimap() {
               let worldY = Math.floor(playerPos.y + 20);
               let block = 0;
               while (worldY >= 0) {
-                const id = chunkManager.getBlock(worldX, worldY, worldZ);
+                const id = getChunkManager().getBlock(worldX, worldY, worldZ);
                 const blk = blocks[id];
 
                 if (!id || !blk) {
