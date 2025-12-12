@@ -1,8 +1,11 @@
 let showPlants = false;
+let size = 200;
+let viewRadius = 50;
+let renderDistance = 3;
 
 const minimap = document.createElement("canvas");
-minimap.width = 200;
-minimap.height = 200;
+minimap.width = size;
+minimap.height = size;
 minimap.style.position = "fixed";
 minimap.style.top = "10px";
 minimap.style.left = "10px";
@@ -117,7 +120,7 @@ async function buildBlockColors() {
     await Promise.all(entries.map(async ([id, url]) => {
         let color = await getAverageColor(url);
         if (!color) color = {
-            r: 0,
+            r: 255,
             g: 0,
             b: 0
         };
@@ -136,8 +139,6 @@ let lastPlayerChunk = null;
 function drawMinimap() {
     const playerPos = _stores.get("gameState")?.gameWorld?.player?.position;
     const playerRot = _stores.get("gameState")?.gameWorld?.player?.rotation.y;
-    const size = 200;
-    const viewRadius = 50;
     const blockSize = size / (viewRadius * 2);
 
     if (!playerPos) return;
@@ -156,11 +157,13 @@ function drawMinimap() {
             z: playerChunkZ
         };
 
-        for (let cx = playerChunkX - 3; cx <= playerChunkX + 3; cx++) {
-            for (let cz = playerChunkZ - 3; cz <= playerChunkZ + 3; cz++) {
+        for (let cx = playerChunkX - renderDistance; cx <= playerChunkX + renderDistance; cx++) {
+            for (let cz = playerChunkZ - renderDistance; cz <= playerChunkZ + renderDistance; cz++) {
                 const key = `${cx},${cz}`;
                 if (!cachedChunks[key]) {
                     const topBlocks = [];
+                    let hasNonAir = false;
+
                     for (let x = 0; x < chunkSize; x++) {
                         topBlocks[x] = [];
                         for (let z = 0; z < chunkSize; z++) {
@@ -168,6 +171,7 @@ function drawMinimap() {
                             let worldZ = cz * chunkSize + z;
                             let worldY = Math.floor(playerPos.y + 20);
                             let block = 0;
+
                             while (worldY >= 0) {
                                 const id = getChunkManager().getBlock(worldX, worldY, worldZ);
                                 const blk = blocks[id];
@@ -183,6 +187,7 @@ function drawMinimap() {
 
                                 if (isLeaves || isWater || !blk.physTransp || (showPlants && isPlant)) {
                                     block = id;
+                                    hasNonAir = true;
                                     break;
                                 }
 
@@ -195,10 +200,18 @@ function drawMinimap() {
                             };
                         }
                     }
-                    cachedChunks[key] = {
-                        topBlocks
-                    };
+
+                    // sometimes chunks arent loaded
+                    // im sorry
+                    if (hasNonAir) {
+                        cachedChunks[key] = { topBlocks };
+                    } else {
+                        setTimeout(() => {
+                            delete cachedChunks[key];
+                        }, 1000);
+                    }
                 }
+
             }
         }
     }
@@ -222,9 +235,9 @@ function drawMinimap() {
             if (!block) continue;
 
             const color = blockColors[block] || {
-                r: 100,
-                g: 100,
-                b: 100
+                r: 255,
+                g: 0,
+                b: 0
             };
 
             ctx.fillStyle = `rgb(${color.r},${color.g},${color.b})`;
