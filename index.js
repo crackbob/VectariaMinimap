@@ -1,27 +1,34 @@
 let showPlants = false;
 let size = 200;
 let viewRadius = 50;
-let renderDistance = 3;
+let renderDistance = 10;
+let chunkLoadDistance = 3;
+const chunkSize = 16;
 
 const minimap = document.createElement("canvas");
 minimap.width = size;
 minimap.height = size;
-minimap.style.position = "fixed";
-minimap.style.top = "10px";
-minimap.style.left = "10px";
-minimap.style.border = "2px solid white";
-minimap.style.zIndex = 9999;
-minimap.style.transformOrigin = "center center";
-minimap.style.borderRadius = "50%";
-minimap.style.backdropFilter = "blur(4px)";
-minimap.style.cursor = "grab";
+Object.assign(minimap.style, {
+    position: "fixed",
+    top: "10px",
+    left: "10px",
+    border: "2px solid white",
+    borderRadius: "50%",
+    zIndex: 9999,
+    backdropFilter: "blur(4px)",
+    cursor: "grab",
+    transformOrigin: "center center"
+});
 document.body.appendChild(minimap);
+
+const ctx = minimap.getContext("2d");
+ctx.imageSmoothingEnabled = false;
 
 let isDragging = false;
 let dragOffsetX = 0;
 let dragOffsetY = 0;
 
-minimap.addEventListener("mousedown", (e) => {
+minimap.addEventListener("mousedown", e => {
     isDragging = true;
     dragOffsetX = e.clientX - minimap.offsetLeft;
     dragOffsetY = e.clientY - minimap.offsetTop;
@@ -29,34 +36,30 @@ minimap.addEventListener("mousedown", (e) => {
     e.preventDefault();
 });
 
-window.addEventListener("mousemove", (e) => {
+window.addEventListener("mousemove", e => {
     if (!isDragging) return;
     minimap.style.left = e.clientX - dragOffsetX + "px";
     minimap.style.top = e.clientY - dragOffsetY + "px";
 });
 
 window.addEventListener("mouseup", () => {
-    if (isDragging) {
-        isDragging = false;
-        minimap.style.cursor = "grab";
-    }
+    isDragging = false;
+    minimap.style.cursor = "grab";
 });
-
-
-const ctx = minimap.getContext("2d");
 
 let provides = app._vnode.component.appContext.provides;
 let appState = provides[Object.getOwnPropertySymbols(provides).find(sym => provides[sym]._s)];
 let _stores = appState._s;
+
 let getBlocks = () => _stores.get("gameState")?.gameWorld?.allItems;
-let getChunkManager = () => _stores.get("gameState").gameWorld.chunkManager;
+let getChunkManager = () => _stores.get("gameState")?.gameWorld?.chunkManager;
+let getPlayer = () => _stores.get("gameState")?.gameWorld?.player;
 
 async function waitForBlocks() {
-    let blocks;
-    while (!(blocks = getBlocks())) {
-        await new Promise(resolve => setTimeout(resolve, 100));
+    while (!getBlocks()) {
+        await new Promise(r => setTimeout(r, 100));
     }
-    return blocks;
+    return getBlocks();
 }
 
 async function getAverageColor(url) {
@@ -132,138 +135,133 @@ async function buildBlockColors() {
 
 const blockColors = await buildBlockColors();
 
-const chunkSize = 16;
+function buildChunkCanvas(topBlocks) {
+    const c = document.createElement("canvas");
+    c.width = chunkSize;
+    c.height = chunkSize;
+    const cctx = c.getContext("2d");
+    cctx.imageSmoothingEnabled = false;
+
+    const img = cctx.createImageData(chunkSize, chunkSize);
+    const d = img.data;
+
+    for (let x = 0; x < chunkSize; x++) {
+        for (let z = 0; z < chunkSize; z++) {
+            const block = topBlocks[x][z].id;
+            const col = blockColors[block];
+            const i = (z * chunkSize + x) * 4;
+
+            if (!block || !col) {
+                d[i + 3] = 0;
+                continue;
+            }
+
+            d[i]     = col.r;
+            d[i + 1] = col.g;
+            d[i + 2] = col.b;
+            d[i + 3] = 255;
+        }
+    }
+
+    cctx.putImageData(img, 0, 0);
+    return c;
+}
+
+
 let cachedChunks = {};
 let lastPlayerChunk = null;
 
+
 function drawMinimap() {
-    const playerPos = _stores.get("gameState")?.gameWorld?.player?.position;
-    const playerRot = _stores.get("gameState")?.gameWorld?.player?.rotation.y;
+    const player = getPlayer();
+    if (!player) return;
+
+    const { x: px, y: py, z: pz } = player.position;
+    const rot = player.rotation.y;
     const blockSize = size / (viewRadius * 2);
 
-    if (!playerPos) return;
+    minimap.style.transform = `rotate(${rot * 180 / Math.PI}deg)`;
 
-    let blocks = getBlocks();
+    const pcx = Math.floor(px / chunkSize);
+    const pcz = Math.floor(pz / chunkSize);
 
-    const deg = (playerRot * (180 / Math.PI)) % 360;
-    minimap.style.transform = `rotate(${deg}deg)`;
+    if (!lastPlayerChunk || lastPlayerChunk.x !== pcx || lastPlayerChunk.z !== pcz) {
+        lastPlayerChunk = { x: pcx, z: pcz };
 
-    const playerChunkX = Math.floor(playerPos.x / chunkSize);
-    const playerChunkZ = Math.floor(playerPos.z / chunkSize);
-
-    if (!lastPlayerChunk || lastPlayerChunk.x !== playerChunkX || lastPlayerChunk.z !== playerChunkZ) {
-        lastPlayerChunk = {
-            x: playerChunkX,
-            z: playerChunkZ
-        };
-
-        for (let cx = playerChunkX - renderDistance; cx <= playerChunkX + renderDistance; cx++) {
-            for (let cz = playerChunkZ - renderDistance; cz <= playerChunkZ + renderDistance; cz++) {
+        for (let cx = pcx - chunkLoadDistance; cx <= pcx + chunkLoadDistance; cx++) {
+            for (let cz = pcz - chunkLoadDistance; cz <= pcz + chunkLoadDistance; cz++) {
                 const key = `${cx},${cz}`;
-                if (!cachedChunks[key]) {
-                    const topBlocks = [];
-                    let hasNonAir = false;
+                if (cachedChunks[key]) continue;
 
-                    for (let x = 0; x < chunkSize; x++) {
-                        topBlocks[x] = [];
-                        for (let z = 0; z < chunkSize; z++) {
-                            let worldX = cx * chunkSize + x;
-                            let worldZ = cz * chunkSize + z;
-                            let worldY = Math.floor(playerPos.y + 20);
-                            let block = 0;
+                const topBlocks = Array.from({ length: chunkSize }, () => Array(chunkSize));
+                let hasData = false;
 
-                            while (worldY >= 0) {
-                                const id = getChunkManager().getBlock(worldX, worldY, worldZ);
-                                const blk = blocks[id];
+                for (let x = 0; x < chunkSize; x++) {
+                    for (let z = 0; z < chunkSize; z++) {
+                        let wx = cx * chunkSize + x;
+                        let wz = cz * chunkSize + z;
+                        let wy = Math.floor(py + 20);
+                        let block = 0;
 
-                                if (!id || !blk) {
-                                    worldY--;
-                                    continue;
-                                }
+                        while (wy >= 0) {
+                            const id = getChunkManager()?.getBlock(wx, wy, wz);
+                            const blk = getBlocks()?.[id];
+                            if (!id || !blk) { wy--; continue; }
 
-                                const isWater = blk.transparent === true && blk.physTransp === true;
-                                const isLeaves = blk.isLeaves === true;
-                                const isPlant = blk.physTransp === true && !isLeaves && !isWater;
+                            const isWater = blk.transparent && blk.physTransp;
+                            const isLeaves = blk.isLeaves;
+                            const isPlant = blk.physTransp && !isLeaves && !isWater;
 
-                                if (isLeaves || isWater || !blk.physTransp || (showPlants && isPlant)) {
-                                    block = id;
-                                    hasNonAir = true;
-                                    break;
-                                }
-
-                                worldY--;
+                            if (isLeaves || isWater || !blk.physTransp || (showPlants && isPlant)) {
+                                block = id;
+                                hasData = true;
+                                break;
                             }
-
-                            topBlocks[x][z] = {
-                                id: block,
-                                y: worldY
-                            };
+                            wy--;
                         }
-                    }
 
-                    // sometimes chunks arent loaded
-                    // im sorry
-                    if (hasNonAir) {
-                        cachedChunks[key] = { topBlocks };
-                    } else {
-                        setTimeout(() => {
-                            delete cachedChunks[key];
-                        }, 1000);
+                        topBlocks[x][z] = { id: block };
                     }
                 }
 
+                if (hasData) {
+                    cachedChunks[key] = {
+                        canvas: buildChunkCanvas(topBlocks)
+                    };
+                } else {
+                    setTimeout(() => delete cachedChunks[key], 1000);
+                }
             }
         }
     }
 
     ctx.clearRect(0, 0, size, size);
 
-    for (let x = -viewRadius; x < viewRadius; x++) {
-        for (let z = -viewRadius; z < viewRadius; z++) {
-            const worldX = Math.floor(playerPos.x + x);
-            const worldZ = Math.floor(playerPos.z + z);
-
-            const cx = Math.floor(worldX / chunkSize);
-            const cz = Math.floor(worldZ / chunkSize);
-            const chunkKey = `${cx},${cz}`;
-            const chunk = cachedChunks[chunkKey];
+    for (let cx = pcx - renderDistance; cx <= pcx + renderDistance; cx++) {
+        for (let cz = pcz - renderDistance; cz <= pcz + renderDistance; cz++) {
+            const key = `${cx},${cz}`;
+            const chunk = cachedChunks[key];
             if (!chunk) continue;
 
-            const bx = ((worldX % chunkSize) + chunkSize) % chunkSize;
-            const bz = ((worldZ % chunkSize) + chunkSize) % chunkSize;
-            const block = chunk.topBlocks[bx][bz].id;
-            if (!block) continue;
+            const dx = Math.floor((cx * chunkSize - px + viewRadius) * blockSize);
+            const dz = Math.floor((cz * chunkSize - pz + viewRadius) * blockSize);
+            const dw = Math.ceil(chunkSize * blockSize) + 1;
+            const dh = Math.ceil(chunkSize * blockSize) + 1;
 
-            const color = blockColors[block] || {
-                r: 255,
-                g: 0,
-                b: 0
-            };
+            ctx.drawImage(chunk.canvas, dx, dz, dw, dh);
 
-            ctx.fillStyle = `rgb(${color.r},${color.g},${color.b})`;
-            ctx.fillRect(
-                (x + viewRadius) * blockSize,
-                (z + viewRadius) * blockSize,
-                blockSize,
-                blockSize
-            );
         }
     }
 
-    const x = size / 2;
-    const y = size / 2;
-
     ctx.beginPath();
-    ctx.arc(x, y, 4, 0, Math.PI * 2);
+    ctx.arc(size / 2, size / 2, 4, 0, Math.PI * 2);
     ctx.fillStyle = "white";
     ctx.fill();
-
-    ctx.lineWidth = 1;
     ctx.strokeStyle = "black";
     ctx.stroke();
 }
 
-requestAnimationFrame(function loop() {
+(function loop() {
     drawMinimap();
     requestAnimationFrame(loop);
-});
+})();
