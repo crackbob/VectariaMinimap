@@ -49,11 +49,16 @@ window.addEventListener("mouseup", () => {
 
 let provides = app._vnode.component.appContext.provides;
 let appState = provides[Object.getOwnPropertySymbols(provides).find(sym => provides[sym]._s)];
-let _stores = appState._s;
+let rawStores = appState._s;
 
-let getBlocks = () => _stores.get("gameState")?.gameWorld?.allItems;
-let getChunkManager = () => _stores.get("gameState")?.gameWorld?.chunkManager;
-let getPlayer = () => _stores.get("gameState")?.gameWorld?.player;
+let keys = ["app", "gameState", "friends", "settings", "sounds", "itemsManager", "roomManager", "modals", "user", "chat", "playerState", "ads"];
+
+let values = [...rawStores.values()];
+let stores = Object.fromEntries(keys.map((k, i) => [k, values[i]]));
+
+let getBlocks = () => stores["gameState"]?.gameWorld?.allItems;
+let getChunkManager = () => stores["gameState"]?.gameWorld?.chunkManager;
+let getPlayer = () => stores["gameState"]?.gameWorld?.player;
 
 async function waitForBlocks() {
     while (!getBlocks()) {
